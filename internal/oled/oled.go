@@ -22,8 +22,10 @@ import (
 )
 
 const (
-	Width  = 128
-	Height = 64
+	Width               = 128
+	Height              = 64
+	autoPageInterval    = 5 * time.Second
+	statusRefreshPeriod = time.Second
 )
 
 var autoPages = []string{
@@ -49,6 +51,7 @@ type Service struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	cache   imageCache
+	wake    chan struct{}
 }
 
 type imageCache struct {
@@ -59,17 +62,45 @@ type imageCache struct {
 	err     error
 }
 
+type loopState struct {
+	pageIndex      int
+	pageChangedAt  time.Time
+	pageMode       string
+	imageIndex     int
+	imageChangedAt time.Time
+	imageKey       string
+}
+
+type renderState struct {
+	page     string
+	cfg      config.System
+	nextWait time.Duration
+}
+
+type displayedFrame struct {
+	pixels   []uint8
+	rotation int
+	valid    bool
+}
+
 func New(display Display, sampler status.Sampler, cfg config.System, log *slog.Logger) *Service {
-	return &Service{display: display, sampler: sampler, cfg: cfg, log: log.With("service", "oled")}
+	return &Service{
+		display: display,
+		sampler: sampler,
+		cfg:     cfg,
+		log:     log.With("service", "oled"),
+		wake:    make(chan struct{}, 1),
+	}
 }
 
 func (s *Service) Update(cfg config.System) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !slices.Equal(s.cfg.OLEDImages(), cfg.OLEDImages()) {
 		s.cache = imageCache{}
 	}
 	s.cfg = cfg
+	s.mu.Unlock()
+	s.notify()
 }
 
 func (s *Service) Start(parent context.Context) {
@@ -101,52 +132,37 @@ func (s *Service) Stop() {
 
 func (s *Service) loop(ctx context.Context) {
 	defer s.wg.Done()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	pageIndex := 0
-	imageIndex := 0
-	lastPageChange := time.Now()
-	lastImageChange := time.Now()
-	imageKey := ""
+	state := loopState{}
+	frame := image.NewGray(image.Rect(0, 0, Width, Height))
+	displayed := displayedFrame{}
 	for {
 		cfg := s.snapshot()
-		images := cfg.OLEDImages()
-		currentImageKey := strings.Join(images, "\x00")
-		if currentImageKey != imageKey {
-			imageIndex = 0
-			lastImageChange = time.Now()
-			imageKey = currentImageKey
-		}
+		current := state.current(cfg, time.Now())
 		if !cfg.OLEDEnable {
-			_ = s.display.Clear(ctx)
+			clearGray(frame)
+			if err := s.displayFrame(ctx, frame, cfg.OLEDRotation, &displayed); err != nil {
+				s.log.Warn("clear oled page", "error", err)
+			}
 		} else {
-			snap, err := s.sampler.Snapshot(ctx)
-			if err != nil {
-				s.log.Warn("sample oled status", "error", err)
-			} else {
-				pages := Pages(cfg)
-				if pageIndex >= len(pages) {
-					pageIndex = 0
-				}
-				if cfg.OLEDPageMode == config.OLEDPageModeAuto && time.Since(lastPageChange) >= 5*time.Second {
-					pageIndex = (pageIndex + 1) % len(pages)
-					lastPageChange = time.Now()
-				}
-				currentPage := pages[pageIndex]
-				if config.NormalizeOLEDPage(currentPage) == config.OLEDPageImage {
-					imageIndex, lastImageChange = nextImageIndex(len(images), imageIndex, lastImageChange, time.Now(), time.Duration(cfg.OLEDImageInterval)*time.Second)
-					cfg.OLEDImagePath = selectedImagePath(images, imageIndex)
-				}
-				img := s.render(currentPage, snap, cfg)
-				if err := s.display.Display(ctx, img, cfg.OLEDRotation); err != nil {
-					s.log.Warn("display oled page", "error", err)
+			snap := status.Snapshot{}
+			if pageNeedsSnapshot(current.page) {
+				var err error
+				snap, err = s.sampler.Snapshot(ctx)
+				if err != nil {
+					s.log.Warn("sample oled status", "error", err)
+					if !s.wait(ctx, current.nextWait) {
+						return
+					}
+					continue
 				}
 			}
+			s.render(frame, current.page, snap, current.cfg)
+			if err := s.displayFrame(ctx, frame, current.cfg.OLEDRotation, &displayed); err != nil {
+				s.log.Warn("display oled page", "error", err)
+			}
 		}
-		select {
-		case <-ctx.Done():
+		if !s.wait(ctx, current.nextWait) {
 			return
-		case <-ticker.C:
 		}
 	}
 }
@@ -171,37 +187,24 @@ func Pages(cfg config.System) []string {
 
 func Render(page string, snap status.Snapshot, cfg config.System) *image.Gray {
 	img := image.NewGray(image.Rect(0, 0, Width, Height))
-	switch config.NormalizeOLEDPage(page) {
-	case config.OLEDPageIP:
-		renderIPs(img, snap, cfg)
-	case config.OLEDPageDisk:
-		renderDisks(img, snap, cfg)
-	case config.OLEDPageHeart:
-		renderHeart(img)
-	case config.OLEDPageImage:
-		path := cfg.OLEDSelectedImagePath()
-		loaded, err := loadImage(path)
-		renderConfiguredImage(img, path, loaded, err)
-	default:
-		renderPerformance(img, snap, cfg)
-	}
+	renderInto(img, page, snap, cfg, loadImage)
 	return img
 }
 
-func (s *Service) render(page string, snap status.Snapshot, cfg config.System) *image.Gray {
-	if config.NormalizeOLEDPage(page) != config.OLEDPageImage {
-		return Render(page, snap, cfg)
-	}
-	img := image.NewGray(image.Rect(0, 0, Width, Height))
-	path := cfg.OLEDSelectedImagePath()
-	loaded, err := s.loadCachedImage(path)
-	renderConfiguredImage(img, path, loaded, err)
-	return img
+func (s *Service) render(dst *image.Gray, page string, snap status.Snapshot, cfg config.System) {
+	renderInto(dst, page, snap, cfg, s.loadCachedImage)
 }
 
 func nextImageIndex(count int, current int, lastChange time.Time, now time.Time, interval time.Duration) (int, time.Time) {
+	return advanceTimedIndex(count, current, lastChange, now, interval)
+}
+
+func advanceTimedIndex(count int, current int, lastChange time.Time, now time.Time, interval time.Duration) (int, time.Time) {
 	if count <= 1 || interval <= 0 {
 		return 0, lastChange
+	}
+	if lastChange.IsZero() {
+		lastChange = now
 	}
 	if current < 0 || current >= count {
 		current = 0
@@ -215,6 +218,20 @@ func nextImageIndex(count int, current int, lastChange time.Time, now time.Time,
 	return current, lastChange.Add(time.Duration(steps) * interval)
 }
 
+func nextChangeDelay(count int, lastChange time.Time, now time.Time, interval time.Duration) time.Duration {
+	if count <= 1 || interval <= 0 {
+		return 0
+	}
+	if lastChange.IsZero() {
+		return interval
+	}
+	elapsed := now.Sub(lastChange)
+	if elapsed >= interval {
+		return 0
+	}
+	return interval - elapsed
+}
+
 func selectedImagePath(paths []string, index int) string {
 	if len(paths) == 0 {
 		return ""
@@ -223,6 +240,143 @@ func selectedImagePath(paths []string, index int) string {
 		index = 0
 	}
 	return paths[index]
+}
+
+func (s *Service) notify() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) wait(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-s.wake:
+			return true
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-s.wake:
+		return true
+	case <-timer.C:
+		return true
+	}
+}
+
+func (s *Service) displayFrame(ctx context.Context, img *image.Gray, rotation int, last *displayedFrame) error {
+	if last.valid && last.rotation == rotation && slices.Equal(last.pixels, img.Pix) {
+		return nil
+	}
+	if err := s.display.Display(ctx, img, rotation); err != nil {
+		return err
+	}
+	if cap(last.pixels) < len(img.Pix) {
+		last.pixels = make([]uint8, len(img.Pix))
+	} else {
+		last.pixels = last.pixels[:len(img.Pix)]
+	}
+	copy(last.pixels, img.Pix)
+	last.rotation = rotation
+	last.valid = true
+	return nil
+}
+
+func (s *loopState) current(cfg config.System, now time.Time) renderState {
+	if s.pageChangedAt.IsZero() {
+		s.pageChangedAt = now
+	}
+	if s.imageChangedAt.IsZero() {
+		s.imageChangedAt = now
+	}
+	if cfg.OLEDPageMode != s.pageMode {
+		s.pageMode = cfg.OLEDPageMode
+		s.pageIndex = 0
+		s.pageChangedAt = now
+	}
+
+	images := cfg.OLEDImages()
+	imageKey := strings.Join(images, "\x00")
+	if imageKey != s.imageKey {
+		s.imageKey = imageKey
+		s.imageIndex = 0
+		s.imageChangedAt = now
+	}
+
+	pages := Pages(cfg)
+	if len(pages) == 0 {
+		pages = []string{config.OLEDPagePerformance}
+	}
+	if s.pageIndex < 0 || s.pageIndex >= len(pages) {
+		s.pageIndex = 0
+		s.pageChangedAt = now
+	}
+	if cfg.OLEDPageMode == config.OLEDPageModeAuto {
+		s.pageIndex, s.pageChangedAt = advanceTimedIndex(len(pages), s.pageIndex, s.pageChangedAt, now, autoPageInterval)
+	} else {
+		s.pageIndex = 0
+	}
+
+	page := pages[s.pageIndex]
+	if config.NormalizeOLEDPage(page) == config.OLEDPageImage {
+		s.imageIndex, s.imageChangedAt = advanceTimedIndex(len(images), s.imageIndex, s.imageChangedAt, now, time.Duration(cfg.OLEDImageInterval)*time.Second)
+		cfg.OLEDImagePath = selectedImagePath(images, s.imageIndex)
+	}
+
+	return renderState{
+		page:     page,
+		cfg:      cfg,
+		nextWait: s.nextWait(cfg, page, len(images), now),
+	}
+}
+
+func (s *loopState) nextWait(cfg config.System, page string, imageCount int, now time.Time) time.Duration {
+	if !cfg.OLEDEnable {
+		return 0
+	}
+	waits := make([]time.Duration, 0, 3)
+	if pageNeedsSnapshot(page) {
+		waits = append(waits, statusRefreshPeriod)
+	}
+	if cfg.OLEDPageMode == config.OLEDPageModeAuto {
+		if delay := nextChangeDelay(len(Pages(cfg)), s.pageChangedAt, now, autoPageInterval); delay > 0 {
+			waits = append(waits, delay)
+		}
+	}
+	if config.NormalizeOLEDPage(page) == config.OLEDPageImage {
+		if delay := nextChangeDelay(imageCount, s.imageChangedAt, now, time.Duration(cfg.OLEDImageInterval)*time.Second); delay > 0 {
+			waits = append(waits, delay)
+		}
+	}
+	return minDuration(waits)
+}
+
+func pageNeedsSnapshot(page string) bool {
+	switch config.NormalizeOLEDPage(page) {
+	case config.OLEDPageHeart, config.OLEDPageImage:
+		return false
+	default:
+		return true
+	}
+}
+
+func minDuration(values []time.Duration) time.Duration {
+	var min time.Duration
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if min == 0 || value < min {
+			min = value
+		}
+	}
+	return min
 }
 
 func renderPerformance(img *image.Gray, snap status.Snapshot, cfg config.System) {
@@ -305,6 +459,24 @@ func renderHeart(img *image.Gray) {
 	drawText(img, "PIRONMAN", 36, 49)
 }
 
+func renderInto(dst *image.Gray, page string, snap status.Snapshot, cfg config.System, loader func(string) (*image.Gray, error)) {
+	clearGray(dst)
+	switch config.NormalizeOLEDPage(page) {
+	case config.OLEDPageIP:
+		renderIPs(dst, snap, cfg)
+	case config.OLEDPageDisk:
+		renderDisks(dst, snap, cfg)
+	case config.OLEDPageHeart:
+		renderHeart(dst)
+	case config.OLEDPageImage:
+		path := cfg.OLEDSelectedImagePath()
+		loaded, err := loader(path)
+		renderConfiguredImage(dst, path, loaded, err)
+	default:
+		renderPerformance(dst, snap, cfg)
+	}
+}
+
 func renderConfiguredImage(dst *image.Gray, path string, src *image.Gray, err error) {
 	if path == "" {
 		drawText(dst, "NO IMAGE", 0, 24)
@@ -361,6 +533,10 @@ func drawImage(dst, src *image.Gray) {
 		return
 	}
 	draw.Draw(dst, dst.Bounds(), src, src.Bounds().Min, draw.Src)
+}
+
+func clearGray(img *image.Gray) {
+	clear(img.Pix)
 }
 
 func selectedIPs(snap status.Snapshot, cfg config.System) []status.IP {

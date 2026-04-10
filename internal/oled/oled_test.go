@@ -1,10 +1,14 @@
 package oled
 
 import (
+	"context"
 	"image"
 	"image/color"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,6 +124,88 @@ func TestNextImageIndex(t *testing.T) {
 	}
 }
 
+func TestFixedSingleImageHasNoRefreshTimer(t *testing.T) {
+	now := time.Unix(10, 0)
+	cfg := config.System{
+		OLEDEnable:        true,
+		OLEDPageMode:      config.OLEDPageModeFixed,
+		OLEDPage:          config.OLEDPageImage,
+		OLEDImagePath:     "/tmp/only.pbm",
+		OLEDImagePaths:    []string{"/tmp/only.pbm"},
+		OLEDImageInterval: config.DefaultOLEDImageInterval,
+	}
+	cfg.Normalize()
+	current := (&loopState{}).current(cfg, now)
+	if current.nextWait != 0 {
+		t.Fatalf("next wait = %s, want no scheduled refresh", current.nextWait)
+	}
+}
+
+func TestFixedImageRotationUsesConfiguredInterval(t *testing.T) {
+	now := time.Unix(10, 0)
+	cfg := config.System{
+		OLEDEnable:        true,
+		OLEDPageMode:      config.OLEDPageModeFixed,
+		OLEDPage:          config.OLEDPageImage,
+		OLEDImagePath:     "/tmp/a.pbm",
+		OLEDImagePaths:    []string{"/tmp/a.pbm", "/tmp/b.pbm"},
+		OLEDImageInterval: 3,
+	}
+	cfg.Normalize()
+	current := (&loopState{}).current(cfg, now)
+	if current.nextWait != 3*time.Second {
+		t.Fatalf("next wait = %s, want 3s", current.nextWait)
+	}
+}
+
+func TestFixedImageServiceDrawsOnceAndSleeps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logo.pbm")
+	src := image.NewGray(image.Rect(0, 0, Width, Height))
+	for y := 8; y < Height-8; y++ {
+		for x := 8; x < Width-8; x++ {
+			src.SetGray(x, y, color.Gray{Y: 255})
+		}
+	}
+	if err := pbm.EncodeFile(path, src); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.System{
+		OLEDEnable:        true,
+		OLEDPageMode:      config.OLEDPageModeFixed,
+		OLEDPage:          config.OLEDPageImage,
+		OLEDImagePath:     path,
+		OLEDImagePaths:    []string{path},
+		OLEDImageInterval: config.DefaultOLEDImageInterval,
+	}
+	cfg.Normalize()
+
+	display := &fakeDisplay{notify: make(chan struct{}, 4)}
+	sampler := &fakeSampler{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	service := New(display, sampler, cfg, logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service.Start(ctx)
+	select {
+	case <-display.notify:
+	case <-time.After(2 * time.Second):
+		service.Stop()
+		t.Fatal("timed out waiting for first OLED draw")
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	service.Stop()
+
+	if got := display.Calls(); got != 1 {
+		t.Fatalf("display calls = %d, want 1", got)
+	}
+	if got := sampler.Calls(); got != 0 {
+		t.Fatalf("sampler calls = %d, want 0 for fixed image", got)
+	}
+}
+
 func TestSelectedImagePath(t *testing.T) {
 	if got := selectedImagePath([]string{"a.pbm", "b.pbm"}, 1); got != "b.pbm" {
 		t.Fatalf("selected path = %q", got)
@@ -169,4 +255,56 @@ func countWhite(pixels []uint8) int {
 		}
 	}
 	return count
+}
+
+type fakeDisplay struct {
+	mu     sync.Mutex
+	calls  int
+	notify chan struct{}
+}
+
+func (d *fakeDisplay) Display(context.Context, *image.Gray, int) error {
+	d.mu.Lock()
+	d.calls++
+	ch := d.notify
+	d.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func (*fakeDisplay) Clear(context.Context) error { return nil }
+func (*fakeDisplay) Off(context.Context) error   { return nil }
+func (*fakeDisplay) Close() error                { return nil }
+
+func (d *fakeDisplay) Calls() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
+type fakeSampler struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *fakeSampler) Snapshot(context.Context) (status.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return status.Snapshot{}, nil
+}
+
+func (*fakeSampler) CPUTemperatureC(context.Context) (float64, error) {
+	return 0, nil
+}
+
+func (s *fakeSampler) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }
