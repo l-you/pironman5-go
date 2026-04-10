@@ -41,6 +41,8 @@ type Options struct {
 	GPIOFanMode          OptionalString
 	GPIOFanPin           OptionalString
 	OLEDEnable           OptionalString
+	OLEDPageMode         OptionalString
+	OLEDPage             OptionalString
 	OLEDDisk             OptionalString
 	OLEDNetworkInterface OptionalString
 	OLEDRotation         OptionalString
@@ -166,6 +168,10 @@ func Parse(args []string) (Options, error) {
 			opts.GPIOFanPin = takeOptional(args, &i, inline, hasInline)
 		case "-oe", "--oled-enable":
 			opts.OLEDEnable = takeOptional(args, &i, inline, hasInline)
+		case "-om", "--oled-page-mode":
+			opts.OLEDPageMode = takeOptional(args, &i, inline, hasInline)
+		case "-op", "--oled-page":
+			opts.OLEDPage = takeOptional(args, &i, inline, hasInline)
 		case "-od", "--oled-disk":
 			opts.OLEDDisk = takeOptional(args, &i, inline, hasInline)
 		case "-oi", "--oled-network-interface":
@@ -283,6 +289,26 @@ func applyConfigOptions(out io.Writer, cfg *config.File, opts Options) (bool, bo
 	if err := applyBool(opts.OLEDEnable, "OLED enable", cfg.System.OLEDEnable, func(v bool) { cfg.System.OLEDEnable = v }); err != nil {
 		return false, printed, err
 	}
+	if opts.OLEDPageMode.Set && opts.OLEDPageMode.HasValue {
+		mode := strings.ToLower(opts.OLEDPageMode.Value)
+		if !slices.Contains(config.OLEDPageModes, mode) {
+			return false, printed, fmt.Errorf("invalid OLED page mode: expected one of %v", config.OLEDPageModes)
+		}
+		opts.OLEDPageMode.Value = mode
+	}
+	if err := applyString(opts.OLEDPageMode, "OLED page mode", cfg.System.OLEDPageMode, func(v string) { cfg.System.OLEDPageMode = strings.ToLower(v) }); err != nil {
+		return false, printed, err
+	}
+	if opts.OLEDPage.Set && opts.OLEDPage.HasValue {
+		page := config.NormalizeOLEDPage(opts.OLEDPage.Value)
+		if !slices.Contains(config.OLEDPages, page) {
+			return false, printed, fmt.Errorf("invalid OLED page: expected one of %v", config.OLEDPages)
+		}
+		opts.OLEDPage.Value = page
+	}
+	if err := applyString(opts.OLEDPage, "OLED page", cfg.System.OLEDPage, func(v string) { cfg.System.OLEDPage = config.NormalizeOLEDPage(v) }); err != nil {
+		return false, printed, err
+	}
 	if err := applyString(opts.OLEDDisk, "OLED disk", cfg.System.OLEDDisk, func(v string) { cfg.System.OLEDDisk = v }); err != nil {
 		return false, printed, err
 	}
@@ -360,6 +386,8 @@ Fan/OLED flags:
   -gm, --gpio-fan-mode [0-4]
   -gp, --gpio-fan-pin [pin]
   -oe, --oled-enable [true|false]
+  -om, --oled-page-mode [auto|fixed]
+  -op, --oled-page [performance|ip|disk|heart]
   -od, --oled-disk [total|device]
   -oi, --oled-network-interface [all|interface]
   -or, --oled-rotation [0|180]`)

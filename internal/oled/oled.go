@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,13 @@ const (
 	Width  = 128
 	Height = 64
 )
+
+var autoPages = []string{
+	config.OLEDPagePerformance,
+	config.OLEDPageIP,
+	config.OLEDPageDisk,
+	config.OLEDPageHeart,
+}
 
 type Display interface {
 	Display(context.Context, *image.Gray, int) error
@@ -79,7 +87,7 @@ func (s *Service) loop(ctx context.Context) {
 	defer s.wg.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	page := 0
+	pageIndex := 0
 	lastPageChange := time.Now()
 	for {
 		cfg := s.snapshot()
@@ -90,11 +98,15 @@ func (s *Service) loop(ctx context.Context) {
 			if err != nil {
 				s.log.Warn("sample oled status", "error", err)
 			} else {
-				if time.Since(lastPageChange) >= 5*time.Second {
-					page = (page + 1) % 3
+				pages := Pages(cfg)
+				if pageIndex >= len(pages) {
+					pageIndex = 0
+				}
+				if cfg.OLEDPageMode == config.OLEDPageModeAuto && time.Since(lastPageChange) >= 5*time.Second {
+					pageIndex = (pageIndex + 1) % len(pages)
 					lastPageChange = time.Now()
 				}
-				img := Render(page, snap, cfg)
+				img := Render(pages[pageIndex], snap, cfg)
 				if err := s.display.Display(ctx, img, cfg.OLEDRotation); err != nil {
 					s.log.Warn("display oled page", "error", err)
 				}
@@ -114,15 +126,26 @@ func (s *Service) snapshot() config.System {
 	return s.cfg
 }
 
-func Render(page int, snap status.Snapshot, cfg config.System) *image.Gray {
+func Pages(cfg config.System) []string {
+	if cfg.OLEDPageMode == config.OLEDPageModeFixed {
+		return []string{config.NormalizeOLEDPage(cfg.OLEDPage)}
+	}
+	pages := make([]string, len(autoPages))
+	copy(pages, autoPages)
+	return pages
+}
+
+func Render(page string, snap status.Snapshot, cfg config.System) *image.Gray {
 	img := image.NewGray(image.Rect(0, 0, Width, Height))
-	switch page % 3 {
-	case 0:
-		renderPerformance(img, snap, cfg)
-	case 1:
-		renderIPs(img, snap)
+	switch config.NormalizeOLEDPage(page) {
+	case config.OLEDPageIP:
+		renderIPs(img, snap, cfg)
+	case config.OLEDPageDisk:
+		renderDisks(img, snap, cfg)
+	case config.OLEDPageHeart:
+		renderHeart(img)
 	default:
-		renderDisks(img, snap)
+		renderPerformance(img, snap, cfg)
 	}
 	return img
 }
@@ -130,56 +153,147 @@ func Render(page int, snap status.Snapshot, cfg config.System) *image.Gray {
 func renderPerformance(img *image.Gray, snap status.Snapshot, cfg config.System) {
 	cpu := clampPercent(snap.CPUPercent)
 	memory := clampPercent(snap.MemoryPercent)
-	temp := snap.CPUTempC
-	unit := cfg.TemperatureUnit
-	if unit == "F" {
-		temp = temp*9/5 + 32
-	}
 	drawText(img, "CPU", 0, 0)
 	drawText(img, fmt.Sprintf("%3.0f%%", cpu), 0, 14)
 	drawBar(img, 0, 28, 56, 7, cpu)
-	drawText(img, fmt.Sprintf("%3.0f%c%s", temp, 176, unit), 72, 0)
+	drawTextClipped(img, temperatureLabel(snap.CPUTempC, cfg.TemperatureUnit), 72, 0, 8)
 	drawText(img, "FAN", 72, 18)
 	drawText(img, fmt.Sprintf("%d", snap.FanRPM), 72, 32)
 	drawText(img, "RAM", 0, 42)
-	drawText(img, fmt.Sprintf("%s/%s", status.FormatBytesString(snap.MemoryUsed), status.FormatBytesString(snap.MemoryTotal)), 32, 42)
+	drawTextClipped(img, fmt.Sprintf("%s/%s", status.FormatBytesString(snap.MemoryUsed), status.FormatBytesString(snap.MemoryTotal)), 32, 42, 13)
 	drawBar(img, 0, 56, 126, 7, memory)
 }
 
-func renderIPs(img *image.Gray, snap status.Snapshot) {
+func renderIPs(img *image.Gray, snap status.Snapshot, cfg config.System) {
 	drawText(img, "IP", 0, 0)
-	if len(snap.IPs) == 0 {
-		drawText(img, "DISCONNECTED", 0, 20)
+	ips := selectedIPs(snap, cfg)
+	if len(ips) == 0 {
+		drawText(img, "NO IPv4", 0, 24)
 		return
 	}
-	for i, ip := range snap.IPs {
-		if i >= 3 {
+	for i, ip := range ips {
+		if i >= 2 {
 			break
 		}
-		drawText(img, ip.Interface, 0, 16+i*16)
-		drawText(img, ip.Address, 40, 16+i*16)
+		y := 14 + i*25
+		drawTextClipped(img, ip.Interface, 0, y, 18)
+		drawTextClipped(img, ip.Address, 0, y+12, 18)
 	}
 }
 
-func renderDisks(img *image.Gray, snap status.Snapshot) {
+func renderDisks(img *image.Gray, snap status.Snapshot, cfg config.System) {
 	drawText(img, "DISK", 0, 0)
-	if len(snap.Disks) == 0 {
-		drawText(img, "NO MOUNTS", 0, 20)
+	disks := selectedDisks(snap, cfg)
+	if len(disks) == 0 {
+		drawText(img, "NO MOUNTS", 0, 24)
 		return
 	}
-	for i, disk := range snap.Disks {
-		if i >= 3 {
+	if len(disks) == 1 {
+		disk := disks[0]
+		drawTextClipped(img, fmt.Sprintf("%s %3.0f%%", disk.Name, clampPercent(disk.Percent)), 0, 16, 18)
+		drawTextClipped(img, formatDiskUsage(disk), 0, 32, 18)
+		drawBar(img, 0, 50, 126, 7, clampPercent(disk.Percent))
+		return
+	}
+	for i, disk := range disks {
+		if i >= 2 {
 			break
 		}
-		y := 16 + i*16
-		name := disk.Name
-		if len(name) > 7 {
-			name = name[:7]
-		}
-		drawText(img, name, 0, y)
-		drawText(img, fmt.Sprintf("%s/%s", status.FormatBytesString(disk.Used), status.FormatBytesString(disk.Total)), 42, y)
-		drawBar(img, 0, y+12, 126, 4, clampPercent(disk.Percent))
+		y := 14 + i*25
+		drawTextClipped(img, fmt.Sprintf("%s %3.0f%%", disk.Name, clampPercent(disk.Percent)), 0, y, 18)
+		drawTextClipped(img, formatDiskUsage(disk), 0, y+12, 18)
 	}
+}
+
+func renderHeart(img *image.Gray) {
+	heart := []string{
+		"011001100",
+		"111111111",
+		"111111111",
+		"111111111",
+		"011111110",
+		"001111100",
+		"000111000",
+		"000010000",
+	}
+	scale := 5
+	x0 := (Width - len(heart[0])*scale) / 2
+	y0 := 5
+	for row, line := range heart {
+		for col, pixel := range line {
+			if pixel != '1' {
+				continue
+			}
+			fillRect(img, x0+col*scale, y0+row*scale, scale, scale)
+		}
+	}
+	drawText(img, "PIRONMAN", 36, 49)
+}
+
+func selectedIPs(snap status.Snapshot, cfg config.System) []status.IP {
+	iface := strings.TrimSpace(cfg.OLEDNetworkInterface)
+	if iface == "" || strings.EqualFold(iface, "all") {
+		return snap.IPs
+	}
+	out := make([]status.IP, 0, 1)
+	for _, ip := range snap.IPs {
+		if ip.Interface == iface {
+			out = append(out, ip)
+		}
+	}
+	return out
+}
+
+func selectedDisks(snap status.Snapshot, cfg config.System) []status.Disk {
+	target := strings.TrimSpace(cfg.OLEDDisk)
+	if target == "" || strings.EqualFold(target, "total") {
+		return aggregateDisks(snap.Disks)
+	}
+	out := make([]status.Disk, 0, 1)
+	for _, disk := range snap.Disks {
+		if disk.Name == target || disk.Mount == target {
+			out = append(out, disk)
+		}
+	}
+	return out
+}
+
+func aggregateDisks(disks []status.Disk) []status.Disk {
+	var total uint64
+	var used uint64
+	for _, disk := range disks {
+		total += disk.Total
+		used += disk.Used
+	}
+	if total == 0 {
+		return nil
+	}
+	return []status.Disk{{Name: "total", Total: total, Used: used, Percent: float64(used) * 100 / float64(total)}}
+}
+
+func temperatureLabel(tempC float64, unit string) string {
+	labelUnit := strings.ToUpper(unit)
+	temp := tempC
+	if labelUnit == "F" {
+		temp = tempC*9/5 + 32
+	} else {
+		labelUnit = "C"
+	}
+	return fmt.Sprintf("%3.0f deg%s", temp, labelUnit)
+}
+
+func formatDiskUsage(disk status.Disk) string {
+	_, unit := status.FormatBytes(disk.Total)
+	used, _ := status.FormatBytes(disk.Used, unit)
+	total, _ := status.FormatBytes(disk.Total, unit)
+	return fmt.Sprintf("%s/%s%s", compactFloat(used), compactFloat(total), unit)
+}
+
+func compactFloat(value float64) string {
+	if value >= 10 || value == float64(int64(value)) {
+		return fmt.Sprintf("%.0f", value)
+	}
+	return fmt.Sprintf("%.1f", value)
 }
 
 func drawText(img *image.Gray, text string, x, y int) {
@@ -190,6 +304,24 @@ func drawText(img *image.Gray, text string, x, y int) {
 		Dot:  fixed.P(x, y+12),
 	}
 	d.DrawString(text)
+}
+
+func drawTextClipped(img *image.Gray, text string, x, y, maxChars int) {
+	drawText(img, truncateText(text, maxChars), x, y)
+}
+
+func truncateText(text string, maxChars int) string {
+	if maxChars <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxChars {
+		return text
+	}
+	if maxChars <= 2 {
+		return string(runes[:maxChars])
+	}
+	return string(runes[:maxChars-2]) + ".."
 }
 
 func drawBar(img *image.Gray, x, y, width, height int, percent float64) {

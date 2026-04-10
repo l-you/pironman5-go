@@ -140,6 +140,26 @@ sudo pironman5 -oe true
 sudo systemctl restart pironman5.service
 ```
 
+### Auto-switch OLED screens
+
+Cycles through `performance`, `ip`, `disk`, and `heart` screens.
+
+```sh
+sudo pironman5 -om auto
+sudo systemctl restart pironman5.service
+```
+
+### Show one OLED screen
+
+Shows only the heart screen.
+
+```sh
+sudo pironman5 -om fixed -op heart
+sudo systemctl restart pironman5.service
+```
+
+Screens: `performance`, `ip`, `disk`, `heart`.
+
 ### Rotate OLED
 
 Rotates the OLED output by 180 degrees.

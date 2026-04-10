@@ -46,6 +46,8 @@ func Standard() Variant {
 			RGBLEDCount:          4,
 			TemperatureUnit:      "C",
 			OLEDEnable:           true,
+			OLEDPageMode:         config.OLEDPageModeAuto,
+			OLEDPage:             config.OLEDPagePerformance,
 			OLEDRotation:         0,
 			OLEDDisk:             "total",
 			OLEDNetworkInterface: "all",

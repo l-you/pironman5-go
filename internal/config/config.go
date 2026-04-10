@@ -11,6 +11,16 @@ import (
 	"strings"
 )
 
+const (
+	OLEDPageModeAuto  = "auto"
+	OLEDPageModeFixed = "fixed"
+
+	OLEDPagePerformance = "performance"
+	OLEDPageIP          = "ip"
+	OLEDPageDisk        = "disk"
+	OLEDPageHeart       = "heart"
+)
+
 type File struct {
 	System System `json:"system"`
 }
@@ -26,6 +36,8 @@ type System struct {
 	RGBLEDCount          int    `json:"rgb_led_count"`
 	TemperatureUnit      string `json:"temperature_unit"`
 	OLEDEnable           bool   `json:"oled_enable"`
+	OLEDPageMode         string `json:"oled_page_mode"`
+	OLEDPage             string `json:"oled_page"`
 	OLEDRotation         int    `json:"oled_rotation"`
 	OLEDDisk             string `json:"oled_disk"`
 	OLEDNetworkInterface string `json:"oled_network_interface"`
@@ -34,8 +46,10 @@ type System struct {
 }
 
 var (
-	DebugLevels = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-	RGBStyles   = []string{"solid", "breathing", "flow", "flow_reverse", "rainbow", "rainbow_reverse", "hue_cycle"}
+	DebugLevels   = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+	RGBStyles     = []string{"solid", "breathing", "flow", "flow_reverse", "rainbow", "rainbow_reverse", "hue_cycle"}
+	OLEDPageModes = []string{OLEDPageModeAuto, OLEDPageModeFixed}
+	OLEDPages     = []string{OLEDPagePerformance, OLEDPageIP, OLEDPageDisk, OLEDPageHeart}
 )
 
 func LoadOrCreate(path string, defaults System) (File, error) {
@@ -123,11 +137,28 @@ func Save(path string, cfg File) error {
 	return nil
 }
 
+func NormalizeOLEDPage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "hearth":
+		return OLEDPageHeart
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
 func (s *System) Normalize() {
 	s.DebugLevel = strings.ToUpper(s.DebugLevel)
 	s.TemperatureUnit = strings.ToUpper(s.TemperatureUnit)
+	s.OLEDPageMode = strings.ToLower(strings.TrimSpace(s.OLEDPageMode))
+	s.OLEDPage = NormalizeOLEDPage(s.OLEDPage)
 	if s.DebugLevel == "" {
 		s.DebugLevel = "INFO"
+	}
+	if s.OLEDPageMode == "" {
+		s.OLEDPageMode = OLEDPageModeAuto
+	}
+	if s.OLEDPage == "" {
+		s.OLEDPage = OLEDPagePerformance
 	}
 }
 
@@ -155,6 +186,12 @@ func (s System) Validate() error {
 	}
 	if s.TemperatureUnit != "C" && s.TemperatureUnit != "F" {
 		return fmt.Errorf("temperature_unit must be C or F")
+	}
+	if !slices.Contains(OLEDPageModes, s.OLEDPageMode) {
+		return fmt.Errorf("oled_page_mode must be one of %v", OLEDPageModes)
+	}
+	if !slices.Contains(OLEDPages, s.OLEDPage) {
+		return fmt.Errorf("oled_page must be one of %v", OLEDPages)
 	}
 	if s.OLEDRotation != 0 && s.OLEDRotation != 180 {
 		return fmt.Errorf("oled_rotation must be 0 or 180")

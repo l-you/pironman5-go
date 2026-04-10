@@ -18,6 +18,8 @@ func testDefaults() System {
 		RGBLEDCount:          4,
 		TemperatureUnit:      "C",
 		OLEDEnable:           true,
+		OLEDPageMode:         OLEDPageModeAuto,
+		OLEDPage:             OLEDPagePerformance,
 		OLEDRotation:         0,
 		OLEDDisk:             "total",
 		OLEDNetworkInterface: "all",
@@ -44,6 +46,9 @@ func TestLoadMigratesLegacyAuto(t *testing.T) {
 	if cfg.System.DebugLevel != "DEBUG" {
 		t.Fatalf("debug level = %q, want DEBUG", cfg.System.DebugLevel)
 	}
+	if cfg.System.OLEDPageMode != OLEDPageModeAuto || cfg.System.OLEDPage != OLEDPagePerformance {
+		t.Fatalf("oled defaults = %q/%q", cfg.System.OLEDPageMode, cfg.System.OLEDPage)
+	}
 }
 
 func TestSaveAndLoadOrCreate(t *testing.T) {
@@ -56,6 +61,8 @@ func TestSaveAndLoadOrCreate(t *testing.T) {
 		t.Fatalf("gpio fan pin = %d, want 6", cfg.System.GPIOFanPin)
 	}
 	cfg.System.RGBStyle = "solid"
+	cfg.System.OLEDPageMode = OLEDPageModeFixed
+	cfg.System.OLEDPage = OLEDPageHeart
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +72,17 @@ func TestSaveAndLoadOrCreate(t *testing.T) {
 	}
 	if loaded.System.RGBStyle != "solid" {
 		t.Fatalf("rgb style = %q, want solid", loaded.System.RGBStyle)
+	}
+	if loaded.System.OLEDPageMode != OLEDPageModeFixed || loaded.System.OLEDPage != OLEDPageHeart {
+		t.Fatalf("oled page = %q/%q, want fixed/heart", loaded.System.OLEDPageMode, loaded.System.OLEDPage)
+	}
+}
+
+func TestValidateRejectsInvalidOLEDPage(t *testing.T) {
+	cfg := testDefaults()
+	cfg.OLEDPage = "missing"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid oled page error")
 	}
 }
 
