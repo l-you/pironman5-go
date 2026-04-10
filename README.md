@@ -102,6 +102,15 @@ sudo systemctl restart pironman5.service
 
 Supported styles: `solid`, `breathing`, `flow`, `flow_reverse`, `rainbow`, `rainbow_reverse`, `hue_cycle`.
 
+### Set RGB animation speed
+
+Changes animation duration. Fading and hue effects still render at a fixed frame cadence.
+
+```sh
+sudo pironman5 -rp 75
+sudo systemctl restart pironman5.service
+```
+
 ### Change GPIO fan mode
 
 Shows the current mode, then turns the GPIO fan on from LOW and above.

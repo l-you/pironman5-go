@@ -11,6 +11,12 @@ import (
 	"github.com/l-you/pironman5-go/internal/config"
 )
 
+const (
+	animationFrameInterval = 20 * time.Millisecond
+	idleFrameInterval      = time.Second
+	errorBackoffInterval   = 5 * time.Second
+)
+
 type Color struct {
 	R uint8
 	G uint8
@@ -70,15 +76,14 @@ func (s *Service) Stop() {
 
 func (s *Service) loop(ctx context.Context) {
 	defer s.wg.Done()
-	counter := 0
+	started := time.Now()
 	for {
 		cfg := s.snapshot()
-		pattern, delay := Generate(cfg, counter)
+		pattern, delay := Generate(cfg, time.Since(started))
 		if err := s.strip.Show(ctx, pattern); err != nil {
 			s.log.Warn("show rgb frame", "error", err)
-			delay = 5 * time.Second
+			delay = errorBackoffInterval
 		}
-		counter++
 		if !sleep(ctx, delay) {
 			return
 		}
@@ -91,55 +96,55 @@ func (s *Service) snapshot() config.System {
 	return s.cfg
 }
 
-func Generate(cfg config.System, counter int) ([]Color, time.Duration) {
+func Generate(cfg config.System, elapsed time.Duration) ([]Color, time.Duration) {
 	if cfg.RGBLEDCount < 1 {
-		return nil, time.Second
+		return nil, idleFrameInterval
 	}
 	colors := make([]Color, cfg.RGBLEDCount)
 	if !cfg.RGBEnable {
-		return colors, time.Second
+		return colors, idleFrameInterval
 	}
 	base, err := parseBaseColor(cfg)
 	if err != nil {
-		return colors, time.Second
+		return colors, idleFrameInterval
 	}
 
 	switch cfg.RGBStyle {
 	case "solid":
 		fill(colors, scale(base, cfg.RGBBrightness))
-		return colors, time.Second
+		return colors, idleFrameInterval
 	case "breathing":
-		counter %= 200
-		brightness := counter
-		if counter >= 100 {
-			brightness = 200 - counter
-		}
-		fill(colors, scale(base, cfg.RGBBrightness*brightness/100))
-		return colors, mapDelay(cfg.RGBSpeed, 100*time.Millisecond, time.Millisecond)
+		cycle := mapDelay(cfg.RGBSpeed, 20*time.Second, 200*time.Millisecond)
+		brightness := (1 - math.Cos(2*math.Pi*phase(elapsed, cycle))) / 2
+		fill(colors, scaleRatio(base, float64(cfg.RGBBrightness)/100*brightness))
+		return colors, animationFrameInterval
 	case "flow", "flow_reverse":
-		index := counter % cfg.RGBLEDCount
+		step := mapDelay(cfg.RGBSpeed, 500*time.Millisecond, 100*time.Millisecond)
+		index := int(elapsed/step) % cfg.RGBLEDCount
 		if cfg.RGBStyle == "flow_reverse" {
 			index = cfg.RGBLEDCount - 1 - index
 		}
 		colors[index] = scale(base, cfg.RGBBrightness)
-		return colors, mapDelay(cfg.RGBSpeed, 500*time.Millisecond, 100*time.Millisecond)
+		return colors, step
 	case "rainbow", "rainbow_reverse":
 		reverse := cfg.RGBStyle == "rainbow_reverse"
+		hueOffset := 360 * phase(elapsed, mapDelay(cfg.RGBSpeed, 36*time.Second, 1800*time.Millisecond))
 		for i := range colors {
 			idx := i
 			if reverse {
 				idx = cfg.RGBLEDCount - 1 - i
 			}
-			hue := float64(idx)*360/float64(cfg.RGBLEDCount) + float64(counter%360)
+			hue := float64(idx)*360/float64(cfg.RGBLEDCount) + hueOffset
 			colors[i] = HSLToRGB(hue, 1, float64(cfg.RGBBrightness)/100)
 		}
-		return colors, mapDelay(cfg.RGBSpeed, 100*time.Millisecond, 5*time.Millisecond)
+		return colors, animationFrameInterval
 	case "hue_cycle":
-		fill(colors, HSLToRGB(float64(counter%360), 1, float64(cfg.RGBBrightness)/100))
-		return colors, mapDelay(cfg.RGBSpeed, 100*time.Millisecond, 5*time.Millisecond)
+		hue := 360 * phase(elapsed, mapDelay(cfg.RGBSpeed, 36*time.Second, 1800*time.Millisecond))
+		fill(colors, HSLToRGB(hue, 1, float64(cfg.RGBBrightness)/100))
+		return colors, animationFrameInterval
 	default:
 		fill(colors, scale(base, cfg.RGBBrightness))
-		return colors, time.Second
+		return colors, idleFrameInterval
 	}
 }
 
@@ -152,16 +157,15 @@ func parseBaseColor(cfg config.System) (Color, error) {
 }
 
 func scale(color Color, percent int) Color {
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
+	return scaleRatio(color, float64(clampInt(percent, 0, 100))/100)
+}
+
+func scaleRatio(color Color, ratio float64) Color {
+	ratio = math.Max(0, math.Min(1, ratio))
 	return Color{
-		R: uint8(int(color.R) * percent / 100),
-		G: uint8(int(color.G) * percent / 100),
-		B: uint8(int(color.B) * percent / 100),
+		R: uint8(math.Round(float64(color.R) * ratio)),
+		G: uint8(math.Round(float64(color.G) * ratio)),
+		B: uint8(math.Round(float64(color.B) * ratio)),
 	}
 }
 
@@ -197,7 +201,19 @@ func HSLToRGB(hue, saturation, brightness float64) Color {
 	default:
 		r, g, b = brightness, p, q
 	}
-	return Color{R: uint8(r * 255), G: uint8(g * 255), B: uint8(b * 255)}
+	return Color{R: floatToByte(r), G: floatToByte(g), B: floatToByte(b)}
+}
+
+func floatToByte(value float64) uint8 {
+	value = math.Max(0, math.Min(1, value))
+	return uint8(math.Round(value * 255))
+}
+
+func phase(elapsed, period time.Duration) float64 {
+	if period <= 0 {
+		return 0
+	}
+	return float64(elapsed%period) / float64(period)
 }
 
 func sleep(ctx context.Context, delay time.Duration) bool {
@@ -212,12 +228,17 @@ func sleep(ctx context.Context, delay time.Duration) bool {
 }
 
 func mapDelay(speed int, slow, fast time.Duration) time.Duration {
-	if speed < 0 {
-		speed = 0
-	}
-	if speed > 100 {
-		speed = 100
-	}
+	speed = clampInt(speed, 0, 100)
 	delta := slow - fast
 	return slow - time.Duration(int64(delta)*int64(speed)/100)
+}
+
+func clampInt(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
