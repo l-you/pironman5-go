@@ -1,8 +1,39 @@
 # pironman5-go
-
 Go daemon essentials for the standard SunFounder Pironman 5.
 
 This rewrite keeps the familiar `pironman5` command surface where it matters, but runs as a foreground Go daemon under systemd. V1 targets the standard Pironman 5 only: config, fan control, RGB, OLED pages, status sampling, logs, and service files. Dashboard/history, Mini/Max variants, vibration wake, and full installer automation are deferred.
+
+> [!IMPORTANT]
+> This is the only text in this repository written without AI.
+> 
+> This project is a Go rewrite of the essential service for the SunFounder Pironman 5. The original source code is written in Python: https://github.com/sunfounder/pironman5
+> 
+> I created and use this project for personal purposes.
+> 
+> You may use https://github.com/l-you/pironman5-go for any purpose, but I do not provide any guarantees regarding its functionality.
+> 
+> I do not promise proper versioning, CI, or verified binary builds.
+> I can only say that:
+> - I use it myself;
+> - I use the binary stored in the `dist` directory;
+> - the binary is compiled with the `go build` command.
+> 
+> If you are a careful developer, you should not download or run this binary directly.
+> It is safer to treat the commit hash as the version and compile the program from source.
+> That is a much safer practice. Do not trust binaries from the internet.
+> 
+> I personally use it on my Raspberry Pi 5 + Pironman 5 server. I have not tested it on the Pironman 5 Max, so compatibility is unknown.
+> 
+> Why did I make this project? I did not like the Python RAM overhead on my lightweight server. It also consumed a small amount of CPU.
+> 
+> Numbers:
+> - The original Python-based Pironman 5 service used approximately 70–110 MB of RAM.
+> - The same service, rewritten in Go, uses a stable ~10 MB of RAM.
+> 
+> The initial version of this repository does not include the dashboard feature. I may add support for it later. I expect it would require about 5 MB of additional RAM, which is not a big deal.
+> 
+> CPU usage dropped from 0.02% to 0.00% for general server stats while running Debian OS + the Pironman service.
+
 
 ## Build
 
