@@ -1,0 +1,29 @@
+{
+  "name": "pironman5-go",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "GOCACHE": "/home/vscode/.cache/go-build",
+    "GOMODCACHE": "/go/pkg/mod"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-go-build,target=/home/vscode/.cache/go-build,type=volume",
+    "source=${localWorkspaceFolderBasename}-go-mod,target=/go/pkg/mod,type=volume",
+    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "sudo chown -R vscode:vscode /go/pkg/mod /home/vscode/.cache/go-build && go version && if [ -f go.mod ]; then go mod download; fi",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go"
+      ],
+      "settings": {
+        "go.formatTool": "gofmt",
+        "go.useLanguageServer": true,
+        "go.toolsManagement.checkForUpdates": "local"
+      }
+    }
+  }
+}
