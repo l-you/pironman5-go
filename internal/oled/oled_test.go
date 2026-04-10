@@ -1,10 +1,14 @@
 package oled
 
 import (
+	"image"
+	"image/color"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/l-you/pironman5-go/internal/config"
+	"github.com/l-you/pironman5-go/internal/pbm"
 	"github.com/l-you/pironman5-go/internal/status"
 )
 
@@ -43,11 +47,60 @@ func TestRenderPagesDrawPixels(t *testing.T) {
 	}
 }
 
+func TestRenderCustomPBMPage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logo.pbm")
+	src := image.NewGray(image.Rect(0, 0, Width, Height))
+	for y := 12; y < 52; y++ {
+		for x := 24; x < 104; x++ {
+			src.SetGray(x, y, color.Gray{Y: 255})
+		}
+	}
+	if err := pbm.EncodeFile(path, src); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.System{OLEDImagePath: path}
+	img := Render(config.OLEDPageImage, status.Snapshot{}, cfg)
+	if img.Bounds().Dx() != Width || img.Bounds().Dy() != Height {
+		t.Fatalf("bounds = %v", img.Bounds())
+	}
+	if countWhite(img.Pix) == 0 {
+		t.Fatal("custom image rendered no white pixels")
+	}
+}
+
+func TestRenderCustomImageRejectsWrongPBMSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "small.pbm")
+	src := image.NewGray(image.Rect(0, 0, 8, 8))
+	src.SetGray(0, 0, color.Gray{Y: 255})
+	if err := pbm.EncodeFile(path, src); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.System{OLEDImagePath: path}
+	img := Render(config.OLEDPageImage, status.Snapshot{}, cfg)
+	if countWhite(img.Pix) == 0 {
+		t.Fatal("expected error text for invalid PBM size")
+	}
+}
+
 func TestFixedPage(t *testing.T) {
 	cfg := config.System{OLEDPageMode: config.OLEDPageModeFixed, OLEDPage: config.OLEDPageHeart}
 	pages := Pages(cfg)
 	if len(pages) != 1 || pages[0] != config.OLEDPageHeart {
 		t.Fatalf("pages = %#v, want heart only", pages)
+	}
+}
+
+func TestAutoPagesIncludeImageOnlyWhenConfigured(t *testing.T) {
+	withoutImage := Pages(config.System{OLEDPageMode: config.OLEDPageModeAuto})
+	for _, page := range withoutImage {
+		if page == config.OLEDPageImage {
+			t.Fatalf("unexpected image page without image path: %#v", withoutImage)
+		}
+	}
+	withImage := Pages(config.System{OLEDPageMode: config.OLEDPageModeAuto, OLEDImagePath: "/tmp/oled.pbm"})
+	if withImage[len(withImage)-1] != config.OLEDPageImage {
+		t.Fatalf("pages = %#v, want image page last", withImage)
 	}
 }
 

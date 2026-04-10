@@ -20,6 +20,7 @@ func testDefaults() System {
 		OLEDEnable:           true,
 		OLEDPageMode:         OLEDPageModeAuto,
 		OLEDPage:             OLEDPagePerformance,
+		OLEDImagePath:        "",
 		OLEDRotation:         0,
 		OLEDDisk:             "total",
 		OLEDNetworkInterface: "all",
@@ -75,6 +76,12 @@ func TestSaveAndLoadOrCreate(t *testing.T) {
 	}
 	if loaded.System.OLEDPageMode != OLEDPageModeFixed || loaded.System.OLEDPage != OLEDPageHeart {
 		t.Fatalf("oled page = %q/%q, want fixed/heart", loaded.System.OLEDPageMode, loaded.System.OLEDPage)
+	}
+}
+
+func TestNormalizeOLEDPageAliases(t *testing.T) {
+	if got := NormalizeOLEDPage("hearth"); got != OLEDPageHeart {
+		t.Fatalf("hearth alias = %q, want heart", got)
 	}
 }
 

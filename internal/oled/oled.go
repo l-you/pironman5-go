@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/l-you/pironman5-go/internal/config"
+	"github.com/l-you/pironman5-go/internal/pbm"
 	"github.com/l-you/pironman5-go/internal/status"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
@@ -44,6 +47,15 @@ type Service struct {
 	cfg     config.System
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
+	cache   imageCache
+}
+
+type imageCache struct {
+	path    string
+	modTime time.Time
+	size    int64
+	img     *image.Gray
+	err     error
 }
 
 func New(display Display, sampler status.Sampler, cfg config.System, log *slog.Logger) *Service {
@@ -53,6 +65,9 @@ func New(display Display, sampler status.Sampler, cfg config.System, log *slog.L
 func (s *Service) Update(cfg config.System) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.TrimSpace(s.cfg.OLEDImagePath) != strings.TrimSpace(cfg.OLEDImagePath) {
+		s.cache = imageCache{}
+	}
 	s.cfg = cfg
 }
 
@@ -106,7 +121,7 @@ func (s *Service) loop(ctx context.Context) {
 					pageIndex = (pageIndex + 1) % len(pages)
 					lastPageChange = time.Now()
 				}
-				img := Render(pages[pageIndex], snap, cfg)
+				img := s.render(pages[pageIndex], snap, cfg)
 				if err := s.display.Display(ctx, img, cfg.OLEDRotation); err != nil {
 					s.log.Warn("display oled page", "error", err)
 				}
@@ -130,8 +145,11 @@ func Pages(cfg config.System) []string {
 	if cfg.OLEDPageMode == config.OLEDPageModeFixed {
 		return []string{config.NormalizeOLEDPage(cfg.OLEDPage)}
 	}
-	pages := make([]string, len(autoPages))
+	pages := make([]string, len(autoPages), len(autoPages)+1)
 	copy(pages, autoPages)
+	if strings.TrimSpace(cfg.OLEDImagePath) != "" {
+		pages = append(pages, config.OLEDPageImage)
+	}
 	return pages
 }
 
@@ -144,9 +162,24 @@ func Render(page string, snap status.Snapshot, cfg config.System) *image.Gray {
 		renderDisks(img, snap, cfg)
 	case config.OLEDPageHeart:
 		renderHeart(img)
+	case config.OLEDPageImage:
+		path := strings.TrimSpace(cfg.OLEDImagePath)
+		loaded, err := loadImage(path)
+		renderConfiguredImage(img, path, loaded, err)
 	default:
 		renderPerformance(img, snap, cfg)
 	}
+	return img
+}
+
+func (s *Service) render(page string, snap status.Snapshot, cfg config.System) *image.Gray {
+	if config.NormalizeOLEDPage(page) != config.OLEDPageImage {
+		return Render(page, snap, cfg)
+	}
+	img := image.NewGray(image.Rect(0, 0, Width, Height))
+	path := strings.TrimSpace(cfg.OLEDImagePath)
+	loaded, err := s.loadCachedImage(path)
+	renderConfiguredImage(img, path, loaded, err)
 	return img
 }
 
@@ -228,6 +261,64 @@ func renderHeart(img *image.Gray) {
 		}
 	}
 	drawText(img, "PIRONMAN", 36, 49)
+}
+
+func renderConfiguredImage(dst *image.Gray, path string, src *image.Gray, err error) {
+	if path == "" {
+		drawText(dst, "NO IMAGE", 0, 24)
+		drawText(dst, "SET -oj", 0, 38)
+		return
+	}
+	if err != nil {
+		drawText(dst, "IMAGE ERR", 0, 20)
+		drawTextClipped(dst, err.Error(), 0, 36, 18)
+		return
+	}
+	drawImage(dst, src)
+}
+
+func (s *Service) loadCachedImage(path string) (*image.Gray, error) {
+	if path == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		s.cache = imageCache{path: path, err: fmt.Errorf("stat: %w", err)}
+		return nil, s.cache.err
+	}
+	if s.cache.path == path && s.cache.size == info.Size() && s.cache.modTime.Equal(info.ModTime()) {
+		return s.cache.img, s.cache.err
+	}
+	img, err := loadImage(path)
+	s.cache = imageCache{
+		path:    path,
+		modTime: info.ModTime(),
+		size:    info.Size(),
+		img:     img,
+		err:     err,
+	}
+	return img, err
+}
+
+func loadImage(path string) (*image.Gray, error) {
+	if path == "" {
+		return nil, nil
+	}
+	img, err := pbm.DecodeFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if img.Bounds().Dx() != Width || img.Bounds().Dy() != Height {
+		return nil, fmt.Errorf("pbm must be %dx%d", Width, Height)
+	}
+	return img, nil
+}
+
+func drawImage(dst, src *image.Gray) {
+	if src == nil {
+		return
+	}
+	draw.Draw(dst, dst.Bounds(), src, src.Bounds().Min, draw.Src)
 }
 
 func selectedIPs(snap status.Snapshot, cfg config.System) []status.IP {

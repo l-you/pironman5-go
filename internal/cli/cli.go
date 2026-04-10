@@ -43,6 +43,7 @@ type Options struct {
 	OLEDEnable           OptionalString
 	OLEDPageMode         OptionalString
 	OLEDPage             OptionalString
+	OLEDImagePath        OptionalString
 	OLEDDisk             OptionalString
 	OLEDNetworkInterface OptionalString
 	OLEDRotation         OptionalString
@@ -172,6 +173,8 @@ func Parse(args []string) (Options, error) {
 			opts.OLEDPageMode = takeOptional(args, &i, inline, hasInline)
 		case "-op", "--oled-page":
 			opts.OLEDPage = takeOptional(args, &i, inline, hasInline)
+		case "-oj", "--oled-image-path":
+			opts.OLEDImagePath = takeOptional(args, &i, inline, hasInline)
 		case "-od", "--oled-disk":
 			opts.OLEDDisk = takeOptional(args, &i, inline, hasInline)
 		case "-oi", "--oled-network-interface":
@@ -309,6 +312,9 @@ func applyConfigOptions(out io.Writer, cfg *config.File, opts Options) (bool, bo
 	if err := applyString(opts.OLEDPage, "OLED page", cfg.System.OLEDPage, func(v string) { cfg.System.OLEDPage = config.NormalizeOLEDPage(v) }); err != nil {
 		return false, printed, err
 	}
+	if err := applyString(opts.OLEDImagePath, "OLED image path", cfg.System.OLEDImagePath, func(v string) { cfg.System.OLEDImagePath = strings.TrimSpace(v) }); err != nil {
+		return false, printed, err
+	}
 	if err := applyString(opts.OLEDDisk, "OLED disk", cfg.System.OLEDDisk, func(v string) { cfg.System.OLEDDisk = v }); err != nil {
 		return false, printed, err
 	}
@@ -387,7 +393,8 @@ Fan/OLED flags:
   -gp, --gpio-fan-pin [pin]
   -oe, --oled-enable [true|false]
   -om, --oled-page-mode [auto|fixed]
-  -op, --oled-page [performance|ip|disk|heart]
+  -op, --oled-page [performance|ip|disk|heart|image]
+  -oj, --oled-image-path [path.pbm]
   -od, --oled-disk [total|device]
   -oi, --oled-network-interface [all|interface]
   -or, --oled-rotation [0|180]`)

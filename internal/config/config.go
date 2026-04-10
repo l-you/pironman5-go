@@ -19,6 +19,7 @@ const (
 	OLEDPageIP          = "ip"
 	OLEDPageDisk        = "disk"
 	OLEDPageHeart       = "heart"
+	OLEDPageImage       = "image"
 )
 
 type File struct {
@@ -38,6 +39,7 @@ type System struct {
 	OLEDEnable           bool   `json:"oled_enable"`
 	OLEDPageMode         string `json:"oled_page_mode"`
 	OLEDPage             string `json:"oled_page"`
+	OLEDImagePath        string `json:"oled_image_path"`
 	OLEDRotation         int    `json:"oled_rotation"`
 	OLEDDisk             string `json:"oled_disk"`
 	OLEDNetworkInterface string `json:"oled_network_interface"`
@@ -49,7 +51,7 @@ var (
 	DebugLevels   = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 	RGBStyles     = []string{"solid", "breathing", "flow", "flow_reverse", "rainbow", "rainbow_reverse", "hue_cycle"}
 	OLEDPageModes = []string{OLEDPageModeAuto, OLEDPageModeFixed}
-	OLEDPages     = []string{OLEDPagePerformance, OLEDPageIP, OLEDPageDisk, OLEDPageHeart}
+	OLEDPages     = []string{OLEDPagePerformance, OLEDPageIP, OLEDPageDisk, OLEDPageHeart, OLEDPageImage}
 )
 
 func LoadOrCreate(path string, defaults System) (File, error) {
@@ -151,6 +153,7 @@ func (s *System) Normalize() {
 	s.TemperatureUnit = strings.ToUpper(s.TemperatureUnit)
 	s.OLEDPageMode = strings.ToLower(strings.TrimSpace(s.OLEDPageMode))
 	s.OLEDPage = NormalizeOLEDPage(s.OLEDPage)
+	s.OLEDImagePath = strings.TrimSpace(s.OLEDImagePath)
 	if s.DebugLevel == "" {
 		s.DebugLevel = "INFO"
 	}

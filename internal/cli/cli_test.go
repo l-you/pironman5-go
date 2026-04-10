@@ -13,7 +13,7 @@ import (
 )
 
 func TestParseOptionalFlags(t *testing.T) {
-	opts, err := Parse([]string{"-rb", "35", "-re", "off", "-om", "fixed", "-op", "heart", "start", "--background"})
+	opts, err := Parse([]string{"-rb", "35", "-re", "off", "-om", "fixed", "-op", "image", "-oj", "/tmp/logo.pbm", "start", "--background"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,15 +29,18 @@ func TestParseOptionalFlags(t *testing.T) {
 	if !opts.OLEDPageMode.HasValue || opts.OLEDPageMode.Value != "fixed" {
 		t.Fatalf("oled page mode = %#v", opts.OLEDPageMode)
 	}
-	if !opts.OLEDPage.HasValue || opts.OLEDPage.Value != "heart" {
+	if !opts.OLEDPage.HasValue || opts.OLEDPage.Value != "image" {
 		t.Fatalf("oled page = %#v", opts.OLEDPage)
+	}
+	if !opts.OLEDImagePath.HasValue || opts.OLEDImagePath.Value != "/tmp/logo.pbm" {
+		t.Fatalf("oled image path = %#v", opts.OLEDImagePath)
 	}
 }
 
 func TestRunAppliesConfigFlags(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	var out bytes.Buffer
-	err := Run(context.Background(), []string{"-cp", configPath, "-rb", "35", "-re", "false", "-rs", "solid", "-om", "fixed", "-op", "hearth"}, &out, io.Discard)
+	err := Run(context.Background(), []string{"-cp", configPath, "-rb", "35", "-re", "false", "-rs", "solid", "-om", "fixed", "-op", "image", "-oj", "/tmp/logo.pbm"}, &out, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +55,7 @@ func TestRunAppliesConfigFlags(t *testing.T) {
 	if cfg.System.RGBBrightness != 35 || cfg.System.RGBEnable || cfg.System.RGBStyle != "solid" {
 		t.Fatalf("unexpected rgb config: %#v", cfg.System)
 	}
-	if cfg.System.OLEDPageMode != config.OLEDPageModeFixed || cfg.System.OLEDPage != config.OLEDPageHeart {
+	if cfg.System.OLEDPageMode != config.OLEDPageModeFixed || cfg.System.OLEDPage != config.OLEDPageImage || cfg.System.OLEDImagePath != "/tmp/logo.pbm" {
 		t.Fatalf("unexpected oled config: %#v", cfg.System)
 	}
 }

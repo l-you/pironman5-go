@@ -40,6 +40,7 @@ This rewrite keeps the familiar `pironman5` command surface where it matters, bu
 ```sh
 go test ./...
 go build -o pironman5 ./cmd/pironman5
+go build -o pironman5-image ./cmd/pironman5-image
 ```
 
 ## Replace an existing Pironman service from git clone
@@ -58,6 +59,7 @@ sudo systemctl disable --now pironman5.service || true
 sudo cp /etc/pironman5/config.json /etc/pironman5/config.json.bak 2>/dev/null || true
 
 sudo install -m 0755 dist/pironman5-linux-arm64 /usr/local/bin/pironman5
+sudo install -m 0755 dist/pironman5-image-linux-arm64 /usr/local/bin/pironman5-image
 sudo install -m 0644 systemd/pironman5.service /etc/systemd/system/pironman5.service
 sudo mkdir -p /etc/pironman5 /var/log/pironman5
 sudo systemctl daemon-reload
@@ -72,12 +74,14 @@ To rebuild from source on the Pi instead of using the committed binary, install 
 ```sh
 go test ./...
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o dist/pironman5-linux-arm64 ./cmd/pironman5
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o dist/pironman5-image-linux-arm64 ./cmd/pironman5-image
 ```
 
 ## Install manually on Raspberry Pi OS
 
 ```sh
 sudo install -m 0755 pironman5 /usr/local/bin/pironman5
+sudo install -m 0755 pironman5-image /usr/local/bin/pironman5-image
 sudo install -m 0644 systemd/pironman5.service /etc/systemd/system/pironman5.service
 sudo mkdir -p /etc/pironman5 /var/log/pironman5
 sudo systemctl daemon-reload
@@ -182,7 +186,7 @@ sudo systemctl restart pironman5.service
 
 ### Auto-switch OLED screens
 
-Cycles through `performance`, `ip`, `disk`, and `heart` screens.
+Cycles through `performance`, `ip`, `disk`, and `heart` screens. Adds `image` when `-oj` points to a `.pbm` file.
 
 ```sh
 sudo pironman5 -om auto
@@ -198,7 +202,24 @@ sudo pironman5 -om fixed -op heart
 sudo systemctl restart pironman5.service
 ```
 
-Screens: `performance`, `ip`, `disk`, `heart`.
+### Convert a JPG or PNG for the OLED
+
+Creates a 128x64 monochrome PBM for the daemon.
+
+```sh
+pironman5-image convert /home/pi/oled.jpg /home/pi/oled.pbm
+```
+
+### Show a custom OLED image
+
+The daemon reads PBM only.
+
+```sh
+sudo pironman5 -om fixed -op image -oj /home/pi/oled.pbm
+sudo systemctl restart pironman5.service
+```
+
+Screens: `performance`, `ip`, `disk`, `heart`, `image`.
 
 ### Rotate OLED
 
