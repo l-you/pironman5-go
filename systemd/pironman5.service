@@ -1,0 +1,13 @@
+[Unit]
+Description=Pironman 5 Go daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/pironman5 start
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
