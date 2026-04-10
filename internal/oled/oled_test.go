@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/l-you/pironman5-go/internal/config"
 	"github.com/l-you/pironman5-go/internal/pbm"
@@ -59,7 +60,8 @@ func TestRenderCustomPBMPage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := config.System{OLEDImagePath: path}
+	cfg := config.System{OLEDImagePath: path, OLEDImagePaths: []string{path}, OLEDImageInterval: config.DefaultOLEDImageInterval}
+	cfg.Normalize()
 	img := Render(config.OLEDPageImage, status.Snapshot{}, cfg)
 	if img.Bounds().Dx() != Width || img.Bounds().Dy() != Height {
 		t.Fatalf("bounds = %v", img.Bounds())
@@ -76,7 +78,8 @@ func TestRenderCustomImageRejectsWrongPBMSize(t *testing.T) {
 	if err := pbm.EncodeFile(path, src); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.System{OLEDImagePath: path}
+	cfg := config.System{OLEDImagePath: path, OLEDImagePaths: []string{path}, OLEDImageInterval: config.DefaultOLEDImageInterval}
+	cfg.Normalize()
 	img := Render(config.OLEDPageImage, status.Snapshot{}, cfg)
 	if countWhite(img.Pix) == 0 {
 		t.Fatal("expected error text for invalid PBM size")
@@ -98,9 +101,31 @@ func TestAutoPagesIncludeImageOnlyWhenConfigured(t *testing.T) {
 			t.Fatalf("unexpected image page without image path: %#v", withoutImage)
 		}
 	}
-	withImage := Pages(config.System{OLEDPageMode: config.OLEDPageModeAuto, OLEDImagePath: "/tmp/oled.pbm"})
+	cfg := config.System{OLEDPageMode: config.OLEDPageModeAuto, OLEDImagePaths: []string{"/tmp/a.pbm", "/tmp/b.pbm"}, OLEDImageInterval: config.DefaultOLEDImageInterval}
+	cfg.Normalize()
+	withImage := Pages(cfg)
 	if withImage[len(withImage)-1] != config.OLEDPageImage {
 		t.Fatalf("pages = %#v, want image page last", withImage)
+	}
+}
+
+func TestNextImageIndex(t *testing.T) {
+	start := time.Unix(10, 0)
+	index, changed := nextImageIndex(3, 0, start, start.Add(7*time.Second), 3*time.Second)
+	if index != 2 {
+		t.Fatalf("index = %d, want 2", index)
+	}
+	if !changed.Equal(start.Add(6 * time.Second)) {
+		t.Fatalf("last change = %s", changed)
+	}
+}
+
+func TestSelectedImagePath(t *testing.T) {
+	if got := selectedImagePath([]string{"a.pbm", "b.pbm"}, 1); got != "b.pbm" {
+		t.Fatalf("selected path = %q", got)
+	}
+	if got := selectedImagePath([]string{"a.pbm", "b.pbm"}, 9); got != "a.pbm" {
+		t.Fatalf("fallback path = %q", got)
 	}
 }
 

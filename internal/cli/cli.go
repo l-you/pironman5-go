@@ -44,6 +44,7 @@ type Options struct {
 	OLEDPageMode         OptionalString
 	OLEDPage             OptionalString
 	OLEDImagePath        OptionalString
+	OLEDImageInterval    OptionalString
 	OLEDDisk             OptionalString
 	OLEDNetworkInterface OptionalString
 	OLEDRotation         OptionalString
@@ -175,6 +176,8 @@ func Parse(args []string) (Options, error) {
 			opts.OLEDPage = takeOptional(args, &i, inline, hasInline)
 		case "-oj", "--oled-image-path":
 			opts.OLEDImagePath = takeOptional(args, &i, inline, hasInline)
+		case "-ot", "--oled-image-interval":
+			opts.OLEDImageInterval = takeOptional(args, &i, inline, hasInline)
 		case "-od", "--oled-disk":
 			opts.OLEDDisk = takeOptional(args, &i, inline, hasInline)
 		case "-oi", "--oled-network-interface":
@@ -240,6 +243,25 @@ func applyConfigOptions(out io.Writer, cfg *config.File, opts Options) (bool, bo
 		}
 		set(value)
 		fmt.Fprintf(out, "Set %s: %t\n", label, value)
+		changed = true
+		return nil
+	}
+	applyImagePaths := func(flag OptionalString, current []string) error {
+		if !flag.Set {
+			return nil
+		}
+		if !flag.HasValue {
+			fmt.Fprintf(out, "OLED image paths: %s\n", strings.Join(current, ", "))
+			printed = true
+			return nil
+		}
+		paths := config.ParseOLEDImagePaths(flag.Value)
+		if len(paths) == 0 {
+			return fmt.Errorf("invalid OLED image paths: expected one or more comma-separated .pbm paths")
+		}
+		cfg.System.OLEDImagePaths = paths
+		cfg.System.OLEDImagePath = paths[0]
+		fmt.Fprintf(out, "Set OLED image paths: %s\n", strings.Join(paths, ", "))
 		changed = true
 		return nil
 	}
@@ -312,7 +334,10 @@ func applyConfigOptions(out io.Writer, cfg *config.File, opts Options) (bool, bo
 	if err := applyString(opts.OLEDPage, "OLED page", cfg.System.OLEDPage, func(v string) { cfg.System.OLEDPage = config.NormalizeOLEDPage(v) }); err != nil {
 		return false, printed, err
 	}
-	if err := applyString(opts.OLEDImagePath, "OLED image path", cfg.System.OLEDImagePath, func(v string) { cfg.System.OLEDImagePath = strings.TrimSpace(v) }); err != nil {
+	if err := applyImagePaths(opts.OLEDImagePath, cfg.System.OLEDImages()); err != nil {
+		return false, printed, err
+	}
+	if err := applyInt(opts.OLEDImageInterval, "OLED image interval", cfg.System.OLEDImageInterval, 1, 86400, func(v int) { cfg.System.OLEDImageInterval = v }); err != nil {
 		return false, printed, err
 	}
 	if err := applyString(opts.OLEDDisk, "OLED disk", cfg.System.OLEDDisk, func(v string) { cfg.System.OLEDDisk = v }); err != nil {
@@ -394,7 +419,8 @@ Fan/OLED flags:
   -oe, --oled-enable [true|false]
   -om, --oled-page-mode [auto|fixed]
   -op, --oled-page [performance|ip|disk|heart|image]
-  -oj, --oled-image-path [path.pbm]
+  -oj, --oled-image-path [path1.pbm,path2.pbm]
+  -ot, --oled-image-interval [seconds]
   -od, --oled-disk [total|device]
   -oi, --oled-network-interface [all|interface]
   -or, --oled-rotation [0|180]`)

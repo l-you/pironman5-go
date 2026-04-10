@@ -186,7 +186,7 @@ sudo systemctl restart pironman5.service
 
 ### Auto-switch OLED screens
 
-Cycles through `performance`, `ip`, `disk`, and `heart` screens. Adds `image` when `-oj` points to a `.pbm` file.
+Cycles through `performance`, `ip`, `disk`, and `heart` screens. Adds `image` when `-oj` points to one or more `.pbm` files.
 
 ```sh
 sudo pironman5 -om auto
@@ -210,12 +210,21 @@ Creates a 128x64 monochrome PBM for the daemon.
 pironman5-image convert /home/pi/oled.jpg /home/pi/oled.pbm
 ```
 
-### Show a custom OLED image
+### Show one custom OLED image
 
 The daemon reads PBM only.
 
 ```sh
 sudo pironman5 -om fixed -op image -oj /home/pi/oled.pbm
+sudo systemctl restart pironman5.service
+```
+
+### Rotate multiple OLED images
+
+Switches between multiple PBM images every 3 seconds.
+
+```sh
+sudo pironman5 -om fixed -op image -oj /home/pi/1.pbm,/home/pi/2.pbm,/home/pi/3.pbm -ot 3
 sudo systemctl restart pironman5.service
 ```
 

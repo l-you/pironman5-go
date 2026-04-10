@@ -49,6 +49,8 @@ func Standard() Variant {
 			OLEDPageMode:         config.OLEDPageModeAuto,
 			OLEDPage:             config.OLEDPagePerformance,
 			OLEDImagePath:        "",
+			OLEDImagePaths:       nil,
+			OLEDImageInterval:    config.DefaultOLEDImageInterval,
 			OLEDRotation:         0,
 			OLEDDisk:             "total",
 			OLEDNetworkInterface: "all",

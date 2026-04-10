@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +66,7 @@ func New(display Display, sampler status.Sampler, cfg config.System, log *slog.L
 func (s *Service) Update(cfg config.System) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimSpace(s.cfg.OLEDImagePath) != strings.TrimSpace(cfg.OLEDImagePath) {
+	if !slices.Equal(s.cfg.OLEDImages(), cfg.OLEDImages()) {
 		s.cache = imageCache{}
 	}
 	s.cfg = cfg
@@ -103,9 +104,19 @@ func (s *Service) loop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	pageIndex := 0
+	imageIndex := 0
 	lastPageChange := time.Now()
+	lastImageChange := time.Now()
+	imageKey := ""
 	for {
 		cfg := s.snapshot()
+		images := cfg.OLEDImages()
+		currentImageKey := strings.Join(images, "\x00")
+		if currentImageKey != imageKey {
+			imageIndex = 0
+			lastImageChange = time.Now()
+			imageKey = currentImageKey
+		}
 		if !cfg.OLEDEnable {
 			_ = s.display.Clear(ctx)
 		} else {
@@ -121,7 +132,12 @@ func (s *Service) loop(ctx context.Context) {
 					pageIndex = (pageIndex + 1) % len(pages)
 					lastPageChange = time.Now()
 				}
-				img := s.render(pages[pageIndex], snap, cfg)
+				currentPage := pages[pageIndex]
+				if config.NormalizeOLEDPage(currentPage) == config.OLEDPageImage {
+					imageIndex, lastImageChange = nextImageIndex(len(images), imageIndex, lastImageChange, time.Now(), time.Duration(cfg.OLEDImageInterval)*time.Second)
+					cfg.OLEDImagePath = selectedImagePath(images, imageIndex)
+				}
+				img := s.render(currentPage, snap, cfg)
 				if err := s.display.Display(ctx, img, cfg.OLEDRotation); err != nil {
 					s.log.Warn("display oled page", "error", err)
 				}
@@ -147,7 +163,7 @@ func Pages(cfg config.System) []string {
 	}
 	pages := make([]string, len(autoPages), len(autoPages)+1)
 	copy(pages, autoPages)
-	if strings.TrimSpace(cfg.OLEDImagePath) != "" {
+	if len(cfg.OLEDImages()) > 0 {
 		pages = append(pages, config.OLEDPageImage)
 	}
 	return pages
@@ -163,7 +179,7 @@ func Render(page string, snap status.Snapshot, cfg config.System) *image.Gray {
 	case config.OLEDPageHeart:
 		renderHeart(img)
 	case config.OLEDPageImage:
-		path := strings.TrimSpace(cfg.OLEDImagePath)
+		path := cfg.OLEDSelectedImagePath()
 		loaded, err := loadImage(path)
 		renderConfiguredImage(img, path, loaded, err)
 	default:
@@ -177,10 +193,36 @@ func (s *Service) render(page string, snap status.Snapshot, cfg config.System) *
 		return Render(page, snap, cfg)
 	}
 	img := image.NewGray(image.Rect(0, 0, Width, Height))
-	path := strings.TrimSpace(cfg.OLEDImagePath)
+	path := cfg.OLEDSelectedImagePath()
 	loaded, err := s.loadCachedImage(path)
 	renderConfiguredImage(img, path, loaded, err)
 	return img
+}
+
+func nextImageIndex(count int, current int, lastChange time.Time, now time.Time, interval time.Duration) (int, time.Time) {
+	if count <= 1 || interval <= 0 {
+		return 0, lastChange
+	}
+	if current < 0 || current >= count {
+		current = 0
+	}
+	elapsed := now.Sub(lastChange)
+	if elapsed < interval {
+		return current, lastChange
+	}
+	steps := int(elapsed / interval)
+	current = (current + steps) % count
+	return current, lastChange.Add(time.Duration(steps) * interval)
+}
+
+func selectedImagePath(paths []string, index int) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	if index < 0 || index >= len(paths) {
+		index = 0
+	}
+	return paths[index]
 }
 
 func renderPerformance(img *image.Gray, snap status.Snapshot, cfg config.System) {

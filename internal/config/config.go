@@ -20,6 +20,8 @@ const (
 	OLEDPageDisk        = "disk"
 	OLEDPageHeart       = "heart"
 	OLEDPageImage       = "image"
+
+	DefaultOLEDImageInterval = 5
 )
 
 type File struct {
@@ -27,24 +29,26 @@ type File struct {
 }
 
 type System struct {
-	DataInterval         int    `json:"data_interval"`
-	DebugLevel           string `json:"debug_level"`
-	RGBColor             string `json:"rgb_color"`
-	RGBBrightness        int    `json:"rgb_brightness"`
-	RGBStyle             string `json:"rgb_style"`
-	RGBSpeed             int    `json:"rgb_speed"`
-	RGBEnable            bool   `json:"rgb_enable"`
-	RGBLEDCount          int    `json:"rgb_led_count"`
-	TemperatureUnit      string `json:"temperature_unit"`
-	OLEDEnable           bool   `json:"oled_enable"`
-	OLEDPageMode         string `json:"oled_page_mode"`
-	OLEDPage             string `json:"oled_page"`
-	OLEDImagePath        string `json:"oled_image_path"`
-	OLEDRotation         int    `json:"oled_rotation"`
-	OLEDDisk             string `json:"oled_disk"`
-	OLEDNetworkInterface string `json:"oled_network_interface"`
-	GPIOFanPin           int    `json:"gpio_fan_pin"`
-	GPIOFanMode          int    `json:"gpio_fan_mode"`
+	DataInterval         int      `json:"data_interval"`
+	DebugLevel           string   `json:"debug_level"`
+	RGBColor             string   `json:"rgb_color"`
+	RGBBrightness        int      `json:"rgb_brightness"`
+	RGBStyle             string   `json:"rgb_style"`
+	RGBSpeed             int      `json:"rgb_speed"`
+	RGBEnable            bool     `json:"rgb_enable"`
+	RGBLEDCount          int      `json:"rgb_led_count"`
+	TemperatureUnit      string   `json:"temperature_unit"`
+	OLEDEnable           bool     `json:"oled_enable"`
+	OLEDPageMode         string   `json:"oled_page_mode"`
+	OLEDPage             string   `json:"oled_page"`
+	OLEDImagePath        string   `json:"oled_image_path"`
+	OLEDImagePaths       []string `json:"oled_image_paths,omitempty"`
+	OLEDImageInterval    int      `json:"oled_image_interval"`
+	OLEDRotation         int      `json:"oled_rotation"`
+	OLEDDisk             string   `json:"oled_disk"`
+	OLEDNetworkInterface string   `json:"oled_network_interface"`
+	GPIOFanPin           int      `json:"gpio_fan_pin"`
+	GPIOFanMode          int      `json:"gpio_fan_mode"`
 }
 
 var (
@@ -148,12 +152,29 @@ func NormalizeOLEDPage(value string) string {
 	}
 }
 
+func ParseOLEDImagePaths(value string) []string {
+	parts := strings.Split(value, ",")
+	return normalizeStringSlice(parts)
+}
+
 func (s *System) Normalize() {
 	s.DebugLevel = strings.ToUpper(s.DebugLevel)
 	s.TemperatureUnit = strings.ToUpper(s.TemperatureUnit)
 	s.OLEDPageMode = strings.ToLower(strings.TrimSpace(s.OLEDPageMode))
 	s.OLEDPage = NormalizeOLEDPage(s.OLEDPage)
 	s.OLEDImagePath = strings.TrimSpace(s.OLEDImagePath)
+	s.OLEDImagePaths = normalizeStringSlice(s.OLEDImagePaths)
+	if len(s.OLEDImagePaths) == 0 && s.OLEDImagePath != "" {
+		s.OLEDImagePaths = []string{s.OLEDImagePath}
+	}
+	if len(s.OLEDImagePaths) > 0 {
+		s.OLEDImagePath = s.OLEDImagePaths[0]
+	} else {
+		s.OLEDImagePath = ""
+	}
+	if s.OLEDImageInterval < 1 {
+		s.OLEDImageInterval = DefaultOLEDImageInterval
+	}
 	if s.DebugLevel == "" {
 		s.DebugLevel = "INFO"
 	}
@@ -196,6 +217,9 @@ func (s System) Validate() error {
 	if !slices.Contains(OLEDPages, s.OLEDPage) {
 		return fmt.Errorf("oled_page must be one of %v", OLEDPages)
 	}
+	if err := validateRange("oled_image_interval", s.OLEDImageInterval, 1, 86400); err != nil {
+		return err
+	}
 	if s.OLEDRotation != 0 && s.OLEDRotation != 180 {
 		return fmt.Errorf("oled_rotation must be 0 or 180")
 	}
@@ -212,6 +236,41 @@ func (s System) Validate() error {
 		return err
 	}
 	return nil
+}
+
+func (s System) OLEDImages() []string {
+	if len(s.OLEDImagePaths) == 0 {
+		if s.OLEDImagePath == "" {
+			return nil
+		}
+		return []string{s.OLEDImagePath}
+	}
+	paths := make([]string, len(s.OLEDImagePaths))
+	copy(paths, s.OLEDImagePaths)
+	return paths
+}
+
+func (s System) OLEDSelectedImagePath() string {
+	selected := strings.TrimSpace(s.OLEDImagePath)
+	if selected != "" {
+		return selected
+	}
+	if len(s.OLEDImagePaths) > 0 {
+		return s.OLEDImagePaths[0]
+	}
+	return ""
+}
+
+func normalizeStringSlice(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func validateRange(name string, value, min, max int) error {

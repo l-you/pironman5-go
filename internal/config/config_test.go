@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -21,6 +22,8 @@ func testDefaults() System {
 		OLEDPageMode:         OLEDPageModeAuto,
 		OLEDPage:             OLEDPagePerformance,
 		OLEDImagePath:        "",
+		OLEDImagePaths:       nil,
+		OLEDImageInterval:    DefaultOLEDImageInterval,
 		OLEDRotation:         0,
 		OLEDDisk:             "total",
 		OLEDNetworkInterface: "all",
@@ -49,6 +52,9 @@ func TestLoadMigratesLegacyAuto(t *testing.T) {
 	}
 	if cfg.System.OLEDPageMode != OLEDPageModeAuto || cfg.System.OLEDPage != OLEDPagePerformance {
 		t.Fatalf("oled defaults = %q/%q", cfg.System.OLEDPageMode, cfg.System.OLEDPage)
+	}
+	if cfg.System.OLEDImageInterval != DefaultOLEDImageInterval {
+		t.Fatalf("oled image interval = %d, want %d", cfg.System.OLEDImageInterval, DefaultOLEDImageInterval)
 	}
 }
 
@@ -85,11 +91,44 @@ func TestNormalizeOLEDPageAliases(t *testing.T) {
 	}
 }
 
+func TestNormalizeMigratesSingleOLEDImagePathToList(t *testing.T) {
+	cfg := testDefaults()
+	cfg.OLEDImagePath = "/tmp/only.pbm"
+	cfg.OLEDImagePaths = nil
+	cfg.OLEDImageInterval = 0
+	cfg.Normalize()
+	if cfg.OLEDImagePath != "/tmp/only.pbm" {
+		t.Fatalf("oled image path = %q", cfg.OLEDImagePath)
+	}
+	if !reflect.DeepEqual(cfg.OLEDImagePaths, []string{"/tmp/only.pbm"}) {
+		t.Fatalf("oled image paths = %#v", cfg.OLEDImagePaths)
+	}
+	if cfg.OLEDImageInterval != DefaultOLEDImageInterval {
+		t.Fatalf("oled image interval = %d, want %d", cfg.OLEDImageInterval, DefaultOLEDImageInterval)
+	}
+}
+
+func TestParseOLEDImagePaths(t *testing.T) {
+	got := ParseOLEDImagePaths(" /tmp/a.pbm, ,/tmp/b.pbm ")
+	want := []string{"/tmp/a.pbm", "/tmp/b.pbm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+}
+
 func TestValidateRejectsInvalidOLEDPage(t *testing.T) {
 	cfg := testDefaults()
 	cfg.OLEDPage = "missing"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid oled page error")
+	}
+}
+
+func TestValidateRejectsInvalidOLEDImageInterval(t *testing.T) {
+	cfg := testDefaults()
+	cfg.OLEDImageInterval = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid oled image interval error")
 	}
 }
 
