@@ -13,6 +13,8 @@ This rewrite keeps the familiar `pironman5` command surface where it matters and
 > I created and use this project for personal purposes.
 > 
 > You may use https://github.com/l-you/pironman5-go for any purpose, but I do not provide any guarantees regarding its functionality.
+>
+> If you encounter any bugs or broken behavior, **please report them via GitHub Issues**: https://github.com/l-you/pironman5-go/issues
 > 
 > I do not promise proper versioning, CI, or verified binary builds.
 > I can only say that:
