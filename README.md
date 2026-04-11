@@ -1,12 +1,14 @@
 # pironman5-go
 Go daemon essentials for the standard SunFounder Pironman 5.
 
-This rewrite keeps the familiar `pironman5` command surface where it matters, but runs as a foreground Go daemon under systemd. V1 targets the standard Pironman 5 only: config, fan control, RGB, OLED pages, status sampling, logs, and service files. Dashboard/history, Mini/Max variants, vibration wake, and full installer automation are deferred.
+This rewrite keeps the familiar `pironman5` command surface where it matters and runs as a foreground Go daemon under systemd. V1 targets the standard Pironman 5 only: config, fan control, RGB, OLED pages, status sampling, logs, and service files. Dashboard/history, Mini/Max variants, vibration wake, and full installer automation are deferred.
 
 > [!IMPORTANT]
 > This is the only text in this repository written without AI.
 > 
 > This project is a Go rewrite of the essential service for the SunFounder Pironman 5. The original source code is written in Python: https://github.com/sunfounder/pironman5
+>
+> **To view and downlaod the original rewrite in Go with 1:1 APIs:** view the commit [l-you/pironman5-go/tree/faeff568730a411a95ee3708839ab3612b9ee1f4](https://github.com/l-you/pironman5-go/tree/faeff568730a411a95ee3708839ab3612b9ee1f4) . In the changes after this commit, I added new features, and slightly modified some APIs.
 > 
 > I created and use this project for personal purposes.
 > 
